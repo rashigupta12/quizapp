@@ -3,20 +3,27 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Briefcase,
+  Calendar,
   CheckCircle,
+  DollarSign,
   Download,
-  Filter,
   FileText,
+  Filter,
+  GraduationCap,
+  Percent,
   Search,
   X,
   XCircle,
-  Calendar,
-  DollarSign,
-  Briefcase,
-  GraduationCap,
-  Percent,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  formatDate,
+  formatSubmissionTime,
+  generatePDFBlob,
+  generateWordBlob,
+  loadLibraries,
+} from "./helper";
 
 interface Attempt {
   id: number;
@@ -147,29 +154,6 @@ export default function StudentsPage() {
     return sortedAttempts[0].completedAt;
   };
 
-  // Format the submission time for display
-  const formatSubmissionTime = (timestamp: string): string => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-
-    // If within 24 hours, show relative time
-    if (diffInHours < 24) {
-      if (diffInHours < 1) {
-        const minutes = Math.floor(diffInHours * 60);
-        return `${minutes}m ago`;
-      }
-      return `${Math.floor(diffInHours)}h ago`;
-    }
-
-    // Otherwise show date
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
-
   // Get time spent on the test
   const getTimeSpent = (student: Student): string | null => {
     const relevantAttempts = selectedQuizId
@@ -248,98 +232,103 @@ export default function StudentsPage() {
     return filtered;
   }, [students, searchTerm, filterType, scoreFilter, selectedQuizId]);
 
-const exportToCSV = () => {
-  const selectedQuizTitle = selectedQuizId
-    ? quizzes.find((q) => q.id === selectedQuizId)?.title || "Unknown Quiz"
-    : "All Quizzes";
+  const exportToCSV = () => {
+    const selectedQuizTitle = selectedQuizId
+      ? quizzes.find((q) => q.id === selectedQuizId)?.title || "Unknown Quiz"
+      : "All Quizzes";
 
-  // Helper function to get all attempts information
-  const getAttemptsInfo = (student: Student) => {
-    const relevantAttempts = selectedQuizId
-      ? student.attempts.filter((attempt) => attempt.quizId === selectedQuizId)
-      : student.attempts;
+    // Helper function to get all attempts information
+    const getAttemptsInfo = (student: Student) => {
+      const relevantAttempts = selectedQuizId
+        ? student.attempts.filter(
+            (attempt) => attempt.quizId === selectedQuizId
+          )
+        : student.attempts;
 
-    if (relevantAttempts.length === 0) {
+      if (relevantAttempts.length === 0) {
+        return {
+          lastSubmissionDate: "N/A",
+          lastSubmissionTime: "N/A",
+          timeSpent: "N/A",
+          totalAttempts: "0",
+          bestScore: "N/A",
+        };
+      }
+
+      // Sort by completion date to get the most recent
+      const sortedAttempts = [...relevantAttempts].sort(
+        (a, b) =>
+          new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
+      );
+
+      const lastAttempt = sortedAttempts[0];
+      const date = new Date(lastAttempt.completedAt);
+
       return {
-        lastSubmissionDate: "N/A",
-        lastSubmissionTime: "N/A", 
-        timeSpent: "N/A",
-        totalAttempts: "0",
-        bestScore: "N/A"
+        lastSubmissionDate: date.toLocaleDateString("en-GB"),
+        lastSubmissionTime: date.toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }),
+        timeSpent: lastAttempt.timeSpent
+          ? `${Math.ceil(lastAttempt.timeSpent / 60)}m`
+          : "N/A",
+        totalAttempts: relevantAttempts.length.toString(),
+        bestScore: getStudentBestScore(student) + "%",
       };
-    }
-
-    // Sort by completion date to get the most recent
-    const sortedAttempts = [...relevantAttempts].sort(
-      (a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
-    );
-    
-    const lastAttempt = sortedAttempts[0];
-    const date = new Date(lastAttempt.completedAt);
-    
-    return {
-      lastSubmissionDate: date.toLocaleDateString('en-GB'),
-      lastSubmissionTime: date.toLocaleTimeString('en-GB', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false 
-      }),
-      timeSpent: lastAttempt.timeSpent ? `${Math.ceil(lastAttempt.timeSpent / 60)}m` : "N/A",
-      totalAttempts: relevantAttempts.length.toString(),
-      bestScore: getStudentBestScore(student) + '%'
     };
+
+    const headers = [
+      "S.No",
+      "Name",
+      "Email",
+      "Phone",
+      "Best Score",
+      "Status",
+      "Total Attempts",
+      "Submission Date",
+      "Submission Time",
+      "Quiz",
+    ];
+
+    const csvContent = [
+      headers.join(","),
+      ...filteredStudents.map((student, index) => {
+        const status = getStudentStatus(student);
+        const attemptsInfo = getAttemptsInfo(student);
+
+        return [
+          index + 1,
+          `"${student.name}"`,
+          `"${student.email}"`,
+          `"${student.phone || "N/A"}"`,
+          attemptsInfo.bestScore,
+          status,
+          attemptsInfo.totalAttempts,
+          `"${attemptsInfo.lastSubmissionDate}"`,
+          `"${attemptsInfo.lastSubmissionTime}"`,
+          `"${selectedQuizTitle}"`,
+        ].join(",");
+      }),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `students_${selectedQuizTitle.replace(/[^a-zA-Z0-9]/g, "_")}_${
+        new Date().toISOString().split("T")[0]
+      }.csv`
+    );
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
-
-  const headers = [
-    "S.No",
-    "Name",
-    "Email", 
-    "Phone",
-    "Best Score",
-    "Status",
-    "Total Attempts",
-    "Submission Date",
-    "Submission Time",
-    "Quiz",
-  ];
-  
-  const csvContent = [
-    headers.join(","),
-    ...filteredStudents.map((student, index) => {
-      const status = getStudentStatus(student);
-      const attemptsInfo = getAttemptsInfo(student);
-
-      return [
-        index + 1,
-        `"${student.name}"`,
-        `"${student.email}"`,
-        `"${student.phone || "N/A"}"`,
-        attemptsInfo.bestScore,
-        status,
-        attemptsInfo.totalAttempts,
-        `"${attemptsInfo.lastSubmissionDate}"`,
-        `"${attemptsInfo.lastSubmissionTime}"`,
-        `"${selectedQuizTitle}"`,
-      ].join(",");
-    }),
-  ].join("\n");
-
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const link = document.createElement("a");
-  const url = URL.createObjectURL(blob);
-  link.setAttribute("href", url);
-  link.setAttribute(
-    "download",
-    `students_${selectedQuizTitle.replace(/[^a-zA-Z0-9]/g, "_")}_${
-      new Date().toISOString().split("T")[0]
-    }.csv`
-  );
-  link.style.visibility = "hidden";
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
 
   const toggleEmailSelection = (email: string) => {
     setSelectedEmails((prev) =>
@@ -355,379 +344,6 @@ const exportToCSV = () => {
   const clearEmailSelection = () => {
     setSelectedEmails([]);
   };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const options: Intl.DateTimeFormatOptions = {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    };
-    return date.toLocaleDateString("en-GB", options);
-  };
-
-  const generateOfferLetterContent = (
-    student: Student,
-    config: DocumentConfig
-  ) => {
-    const formattedIssueDate = formatDate(config.issueDate);
-    const formattedJoiningDate = formatDate(config.joiningDate);
-    const formattedEndDate = formatDate(config.endDate);
-
-    return `
-      <div style="font-family: 'Times New Roman', serif !important; line-height: 1.6; max-width: 8.5in; margin: 0 auto; color: #000000 !important; background-color: #ffffff !important; padding: 20px;">
-        <div style="text-align: center; margin-bottom: 10px; color: #000000 !important;">
-          <img src="https://rxo5hd130p.ufs.sh/f/q5swrPKmNsM9oTaM85w42eRf7hMqdyWPJ1QctavKoT8OLpVY" alt="Company Logo" style="width: 100px; height: auto;" />
-          <div style="font-size: 16px; font-weight: bold; color: #000000 !important;">
-            Gennext IT Management And Consulting Pvt Ltd
-          </div>
-          <div style="font-size: 12px;  color: #000000 !important;">
-            33B Pocket A, Mayur Vihar, Phase 2<br>
-            Delhi 110091
-          </div>
-        </div>
-
-        <div style="text-align: right; margin-bottom: 5px; font-weight: bold; color: #000000 !important;">
-          ${formattedIssueDate}
-        </div>
-
-        <div style="margin-bottom: 10px; color: #000000 !important;">
-          ${student.name}<br>
-          Email: ${student.email}
-        </div>
-
-        <div style="color: #000000 !important;">Dear ${student.name},</div>
-
-        <div style="font-weight: bold; margin: 20px 0; color: #000000 !important;">
-          Subject: Internship offer letter
-        </div>
-
-        <div style="margin: 15px 0; text-align: justify; color: #000000 !important;">
-          We are pleased to extend to you an offer to join Gennext IT Management
-          And Consulting Pvt Ltd as an Intern. We are excited about the prospect
-          of you joining our team and contributing to our projects.
-        </div>
-
-        <ul style="padding-left: 10px; color: #000000 !important;">
-          <li style="margin-bottom: 3px; color: #000000 !important;">Position: ${config.designation}</li>
-          <li style="margin-bottom: 3px; color: #000000 !important;">Monthly Stipend: Rs. ${config.stipend}</li>
-          <li style="margin-bottom: 3px; color: #000000 !important;">Internship Duration: Initial period of ${config.timePeriod}</li>
-          <li style="margin-bottom: 3px; color: #000000 !important;">Extension: The internship may be extended based on your performance.</li>
-          <li style="margin-bottom: 3px; color: #000000 !important;">Base Location: Noida</li>
-        </ul>
-
-        <div style="margin: 10px 0; color: #000000 !important;">
-          <div style="font-weight: bold; margin-bottom: 10px; color: #000000 !important;">Terms and Conditions of Employment:</div>
-          
-          <p style="color: #000000 !important;"><strong>Reporting:</strong> You will report to Atul Raj, Software Engineer</p>
-          
-          <p style="color: #000000 !important;"><strong>Work Hours:</strong> Our regular working hours will be 9:00 AM to 6:00 PM, Monday to Saturday.</p>
-          
-          <p style="color: #000000 !important;"><strong>Benefits:</strong> As part of this internship you will be provided an
-          opportunity to improve your basics in full stack development and then
-          work on live projects and get exposure to work on industry related
-          software challenges and mitigate these through software development.</p>
-        </div>
-
-        <div style="page-break-before: always; margin: 15px 0; text-align: justify; padding-top: 20px; color: #000000 !important;">
-          We look forward to welcoming you to Gennext IT Management And
-          Consulting Pvt Ltd.
-        </div>
-
-        <div style="margin: 15px 0; text-align: justify; color: #000000 !important;">
-          Your internship starts from <strong>${formattedJoiningDate}</strong> and will
-          continue through to <strong>${formattedEndDate}</strong>, post which we will
-          evaluate your performance and may offer you either extended paid
-          internship or an offer letter based on your performance.
-        </div>
-
-        <div style=" text-align: justify; color: #000000 !important;">
-          The managing committee welcomes you and looks forward to a pleasant
-          and long term association with you.
-        </div>
-
-        <div style="margin: 15px 0; color: #000000 !important;">Thanking You,</div>
-
-        <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: end;">
-          <div style="text-align: center;">
-            <div style="">
-              <img src="https://rxo5hd130p.ufs.sh/f/q5swrPKmNsM9uAfht31kJCvqgXFyDsoUNcIdQBThGV8WZY0r" alt="Signature" style="width: 100px; height: auto;" />
-            </div>
-            <div style="color: #000000 !important;">Ruchi Gupta (Director HR)</div>
-            <div style="color: #000000 !important;">Gennext IT Management And Consulting Pvt Ltd.</div>
-          </div>
-          <div style="text-align: center;">
-            <div style="margin-bottom: 50px;"></div>
-            <div style="color: #000000 !important;">(${student.name})</div>
-            <div style="color: #000000 !important;">Candidate</div>
-          </div>
-        </div>
-      </div>
-    `;
-  };
-
-  const loadLibraries = async () => {
-    if (typeof window !== "undefined") {
-      const promises = [];
-
-      if (!(window as any).JSZip) {
-        const jszipPromise = new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src =
-            "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-          script.onload = () => resolve((window as any).JSZip);
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-        promises.push(jszipPromise);
-      }
-
-      if (!(window as any).jsPDF) {
-        const jspdfPromise = new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src =
-            "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-          script.onload = () => resolve((window as any).jspdf);
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-        promises.push(jspdfPromise);
-      }
-
-      if (!(window as any).html2canvas) {
-        const html2canvasPromise = new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src =
-            "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-          script.onload = () => resolve((window as any).html2canvas);
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-        promises.push(html2canvasPromise);
-      }
-
-      await Promise.all(promises);
-    }
-
-    return {
-      JSZip: (window as any).JSZip,
-      jsPDF: (window as any).jspdf?.jsPDF,
-      html2canvas: (window as any).html2canvas,
-    };
-  };
-
-  const sanitizeHtmlForCanvas = (htmlString: string): string => {
-    // Remove any CSS that might use lab() color functions or other unsupported features
-    return (
-      htmlString
-        .replace(/color:\s*lab\([^)]*\)/gi, "color: #000000")
-        .replace(
-          /background-color:\s*lab\([^)]*\)/gi,
-          "background-color: #ffffff"
-        )
-        .replace(/border-color:\s*lab\([^)]*\)/gi, "border-color: #000000")
-        // Replace any other modern CSS color functions that might not be supported
-        .replace(/color:\s*oklch\([^)]*\)/gi, "color: #000000")
-        .replace(/color:\s*lch\([^)]*\)/gi, "color: #000000")
-        .replace(/color:\s*oklab\([^)]*\)/gi, "color: #000000")
-        // Replace CSS custom properties that might contain unsupported colors
-        .replace(/var\(--[^)]*\)/gi, "#000000")
-        // Ensure all text is black and backgrounds are white
-        .replace(
-          /<div([^>]*)>/gi,
-          '<div$1 style="color: #000000; background-color: transparent;">'
-        )
-        .replace(/<p([^>]*)>/gi, '<p$1 style="color: #000000;">')
-        .replace(/<span([^>]*)>/gi, '<span$1 style="color: #000000;">')
-    );
-  };
-
-  const generatePDFBlob = async (
-    student: Student,
-    config: DocumentConfig
-  ): Promise<Blob> => {
-    const { jsPDF, html2canvas } = await loadLibraries();
-
-    if (!jsPDF || !html2canvas) {
-      throw new Error("Failed to load PDF generation libraries");
-    }
-
-    const content = generateOfferLetterContent(student, config);
-    const sanitizedContent = sanitizeHtmlForCanvas(content);
-
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "absolute";
-    iframe.style.left = "-9999px";
-    iframe.style.width = "794px"; // Approximate A4 width in px (at 96dpi)
-    iframe.style.height = "auto";
-    document.body.appendChild(iframe);
-
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!iframeDoc) {
-      document.body.removeChild(iframe);
-      throw new Error("Failed to create iframe document");
-    }
-
-    iframeDoc.open();
-    iframeDoc.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <style>
-          body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Times New Roman', serif;
-            background-color: #ffffff;
-            color: #000000;
-            width: 794px;
-          }
-          * {
-            box-sizing: border-box;
-            color: #000000 !important;
-            background-color: transparent !important;
-            border-color: #000000 !important;
-          }
-        </style>
-      </head>
-      <body>
-        ${sanitizedContent}
-      </body>
-    </html>
-  `);
-    iframeDoc.close();
-
-    try {
-      // Wait for images to load
-      const images = iframeDoc.querySelectorAll("img");
-      const loadPromises = Array.from(images).map(
-        (img: HTMLImageElement) =>
-          new Promise((resolve, reject) => {
-            if (img.complete) {
-              resolve(null);
-            } else {
-              img.onload = resolve;
-              img.onerror = reject;
-            }
-          })
-      );
-      await Promise.all(loadPromises);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      const scale = 2;
-      const pageWidthPx = 794;
-      const pageHeightPx = 1123;
-
-      const canvas = await html2canvas(iframeDoc.body, {
-        scale,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: "#ffffff",
-        width: pageWidthPx,
-        windowWidth: pageWidthPx,
-        logging: false,
-      });
-
-      const canvasWidth = canvas.width;
-      const canvasHeight = canvas.height;
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "px",
-        format: [pageWidthPx, pageHeightPx],
-      });
-
-      const canvasPageHeight = pageHeightPx * scale;
-      let sourceY = 0;
-      let pageCount = 0;
-
-      while (sourceY < canvasHeight) {
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = canvasWidth;
-        const remainingHeight = canvasHeight - sourceY;
-        tempCanvas.height = Math.min(canvasPageHeight, remainingHeight);
-
-        // Skip adding a page if the remaining height is too small (e.g., less than 10px)
-        if (tempCanvas.height < 10) {
-          break;
-        }
-
-        const tempCtx = tempCanvas.getContext("2d");
-        if (!tempCtx) throw new Error("Failed to get temp canvas context");
-
-        tempCtx.drawImage(
-          canvas,
-          0,
-          sourceY,
-          canvasWidth,
-          tempCanvas.height,
-          0,
-          0,
-          canvasWidth,
-          tempCanvas.height
-        );
-
-        const tempImgData = tempCanvas.toDataURL("image/png");
-        if (pageCount > 0) {
-          pdf.addPage();
-        }
-        pdf.addImage(
-          tempImgData,
-          "PNG",
-          0,
-          0,
-          pageWidthPx,
-          tempCanvas.height / scale
-        );
-
-        sourceY += tempCanvas.height;
-        pageCount++;
-      }
-
-      return new Blob([pdf.output("blob")], { type: "application/pdf" });
-    } catch (error) {
-      console.error("PDF generation error:", error);
-      throw new Error("Failed to generate PDF. Please try again.");
-    } finally {
-      document.body.removeChild(iframe);
-    }
-  };
-  const generateWordBlob = (student: Student, config: DocumentConfig): Blob => {
-    const content = generateOfferLetterContent(student, config);
-
-    const wordDocument = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office"
-            xmlns:w="urn:schemas-microsoft-com:office:word"
-            xmlns="http://www.w3.org/TR/REC-html40">
-      <head>
-        <meta charset="utf-8">
-        <title>Internship Offer Letter</title>
-        <style>
-          @page {
-            size: A4;
-            margin: 1in;
-          }
-          body {
-            font-family: 'Times New Roman', serif;
-            font-size: 11pt;
-            line-height: 1.6;
-            color: #000000;
-            background-color: #ffffff;
-          }
-        </style>
-      </head>
-      <body>
-        ${content}
-      </body>
-      </html>
-    `;
-
-    return new Blob([wordDocument], {
-      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
-  };
-
   const createZipWithDocuments = async (
     students: Student[],
     config: DocumentConfig
@@ -768,20 +384,20 @@ const exportToCSV = () => {
       }
 
       const readmeContent = `
-INTERNSHIP OFFER LETTERS - ${config.issueDate}
-
-Generated for ${students.length} student(s)
-
-Configuration:
-- Issue Date: ${formatDate(config.issueDate)}
-- Joining Date: ${formatDate(config.joiningDate)}
-- End Date: ${formatDate(config.endDate)}
-- Duration: ${config.timePeriod}
-- Stipend: Rs. ${config.stipend}
-- Position: ${config.designation}
-
-Generated on: ${new Date().toLocaleString()}
-      `.trim();
+    INTERNSHIP OFFER LETTERS - ${config.issueDate}
+    
+    Generated for ${students.length} student(s)
+    
+    Configuration:
+    - Issue Date: ${formatDate(config.issueDate)}
+    - Joining Date: ${formatDate(config.joiningDate)}
+    - End Date: ${formatDate(config.endDate)}
+    - Duration: ${config.timePeriod}
+    - Stipend: Rs. ${config.stipend}
+    - Position: ${config.designation}
+    
+    Generated on: ${new Date().toLocaleString()}
+          `.trim();
 
       zip.file("README.txt", readmeContent);
 
@@ -999,132 +615,134 @@ Generated on: ${new Date().toLocaleString()}
       )}
 
       {/* Students Table - Desktop */}
-     <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
-  {/* ===== HEADER ===== */}
-  <div className="grid grid-cols-12 bg-gray-100 p-4 font-medium text-sm">
-    <div className="col-span-1">
-      <input
-        type="checkbox"
-        checked={
-          selectedEmails.length === filteredStudents.length &&
-          filteredStudents.length > 0
-        }
-        onChange={
-          selectedEmails.length === filteredStudents.length
-            ? clearEmailSelection
-            : selectAllEmails
-        }
-        className="w-4 h-4"
-      />
-    </div>
-    <div className="col-span-1">S.No</div>
-    <div className="col-span-2">Name</div>
-    <div className="col-span-3">Email</div> {/* Increased space */}
-    <div className="col-span-2">Phone</div>
-    <div className="col-span-1 text-center">Score</div>
-    <div className="col-span-1 text-center">Status</div>
-    <div className="col-span-1 text-center">Submitted</div>
-  </div>
-
-  {/* ===== NO STUDENT FOUND ===== */}
-  {filteredStudents.length === 0 ? (
-    <div className="p-8 text-center text-gray-500">
-      {selectedQuizId
-        ? `No students found for the selected quiz ${
-            searchTerm || filterType !== "all" || scoreFilter !== "all"
-              ? "matching your criteria"
-              : ""
-          }.`
-        : searchTerm || filterType !== "all" || scoreFilter !== "all"
-        ? "No students match your search criteria."
-        : "No students found."}
-    </div>
-  ) : (
-    /* ===== STUDENT ROWS ===== */
-    filteredStudents.map((student, index) => {
-      const bestScore = getStudentBestScore(student);
-      const status = getStudentStatus(student);
-      const isSelected = selectedEmails.includes(student.email);
-      const lastSubmission = getLastSubmissionTime(student);
-
-      return (
-        <div
-          key={student.id}
-          className="grid grid-cols-12 p-4 items-center hover:bg-gray-50 border-b border-gray-200 text-sm"
-        >
-          {/* Checkbox */}
+      <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
+        {/* ===== HEADER ===== */}
+        <div className="grid grid-cols-12 bg-gray-100 p-4 font-medium text-sm">
           <div className="col-span-1">
             <input
               type="checkbox"
-              checked={isSelected}
-              onChange={() => toggleEmailSelection(student.email)}
+              checked={
+                selectedEmails.length === filteredStudents.length &&
+                filteredStudents.length > 0
+              }
+              onChange={
+                selectedEmails.length === filteredStudents.length
+                  ? clearEmailSelection
+                  : selectAllEmails
+              }
               className="w-4 h-4"
             />
           </div>
+          <div className="col-span-1">S.No</div>
+          <div className="col-span-2">Name</div>
+          <div className="col-span-3">Email</div> {/* Increased space */}
+          <div className="col-span-2">Phone</div>
+          <div className="col-span-1 text-center">Score</div>
+          <div className="col-span-1 text-center">Status</div>
+          <div className="col-span-1 text-center">Submitted</div>
+        </div>
 
-          {/* S.No */}
-          <div className="col-span-1">{index + 1}</div>
-
-          {/* Name */}
-          <div className="col-span-2 font-medium truncate">{student.name}</div>
-
-          {/* Email */}
-          <div className="col-span-3 text-gray-600 truncate">
-            {student.email}
+        {/* ===== NO STUDENT FOUND ===== */}
+        {filteredStudents.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            {selectedQuizId
+              ? `No students found for the selected quiz ${
+                  searchTerm || filterType !== "all" || scoreFilter !== "all"
+                    ? "matching your criteria"
+                    : ""
+                }.`
+              : searchTerm || filterType !== "all" || scoreFilter !== "all"
+              ? "No students match your search criteria."
+              : "No students found."}
           </div>
+        ) : (
+          /* ===== STUDENT ROWS ===== */
+          filteredStudents.map((student, index) => {
+            const bestScore = getStudentBestScore(student);
+            const status = getStudentStatus(student);
+            const isSelected = selectedEmails.includes(student.email);
+            const lastSubmission = getLastSubmissionTime(student);
 
-          {/* Phone */}
-          <div className="col-span-2 text-gray-600 truncate">
-            {student.phone || "N/A"}
-          </div>
-
-          {/* Score */}
-          <div className="col-span-1 text-center">
-            {bestScore !== null ? (
-              <span
-                className={`font-medium ${
-                  bestScore >= 70 ? "text-green-600" : "text-red-600"
-                }`}
+            return (
+              <div
+                key={student.id}
+                className="grid grid-cols-12 p-4 items-center hover:bg-gray-50 border-b border-gray-200 text-sm"
               >
-                {bestScore}%
-              </span>
-            ) : (
-              <span className="text-gray-400">N/A</span>
-            )}
-          </div>
+                {/* Checkbox */}
+                <div className="col-span-1">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleEmailSelection(student.email)}
+                    className="w-4 h-4"
+                  />
+                </div>
 
-          {/* Status */}
-          <div className="col-span-1 text-center">
-            {status === "Pass" ? (
-              <CheckCircle className="w-5 h-5 text-green-600 mx-auto" />
-            ) : status === "Fail" ? (
-              <XCircle className="w-5 h-5 text-red-600 mx-auto" />
-            ) : (
-              <span className="text-gray-400 text-xs">No Attempts</span>
-            )}
-          </div>
+                {/* S.No */}
+                <div className="col-span-1">{index + 1}</div>
 
-          {/* Submitted */}
-          <div className="col-span-1 text-center text-xs text-gray-600">
-            {lastSubmission ? (
-              <div>
-                <div>{formatSubmissionTime(lastSubmission)}</div>
-                <div className="text-gray-400">
-                  {new Date(lastSubmission).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                {/* Name */}
+                <div className="col-span-2 font-medium truncate">
+                  {student.name}
+                </div>
+
+                {/* Email */}
+                <div className="col-span-3 text-gray-600 truncate">
+                  {student.email}
+                </div>
+
+                {/* Phone */}
+                <div className="col-span-2 text-gray-600 truncate">
+                  {student.phone || "N/A"}
+                </div>
+
+                {/* Score */}
+                <div className="col-span-1 text-center">
+                  {bestScore !== null ? (
+                    <span
+                      className={`font-medium ${
+                        bestScore >= 70 ? "text-green-600" : "text-red-600"
+                      }`}
+                    >
+                      {bestScore}%
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">N/A</span>
+                  )}
+                </div>
+
+                {/* Status */}
+                <div className="col-span-1 text-center">
+                  {status === "Pass" ? (
+                    <CheckCircle className="w-5 h-5 text-green-600 mx-auto" />
+                  ) : status === "Fail" ? (
+                    <XCircle className="w-5 h-5 text-red-600 mx-auto" />
+                  ) : (
+                    <span className="text-gray-400 text-xs">No Attempts</span>
+                  )}
+                </div>
+
+                {/* Submitted */}
+                <div className="col-span-1 text-center text-xs text-gray-600">
+                  {lastSubmission ? (
+                    <div>
+                      <div>{formatSubmissionTime(lastSubmission)}</div>
+                      <div className="text-gray-400">
+                        {new Date(lastSubmission).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">Not submitted</span>
+                  )}
                 </div>
               </div>
-            ) : (
-              <span className="text-gray-400">Not submitted</span>
-            )}
-          </div>
-        </div>
-      );
-    })
-  )}
-</div>
+            );
+          })
+        )}
+      </div>
 
       {/* Students Table - Mobile */}
       <div className="lg:hidden space-y-4">
