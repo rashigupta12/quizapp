@@ -1,3 +1,4 @@
+//src/app/admin/students/page.tsx
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
   Search,
   X,
   XCircle,
+  RotateCcw, // ADD THIS IMPORT
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -31,9 +33,9 @@ interface Attempt {
   quizTitle: string;
   score: number;
   passed: boolean;
-  completedAt: string; // This already exists - it's the submission timestamp
-  startedAt?: string; // Add this if you want to show start time too
-  timeSpent?: number; // Add this if you want to show duration
+  completedAt: string;
+  startedAt?: string;
+  timeSpent?: number;
 }
 
 interface Student {
@@ -78,6 +80,15 @@ export default function StudentsPage() {
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [docType, setDocType] = useState<DocType>("pdf");
+  // ADD THESE TWO STATE VARIABLES
+  const [resetModal, setResetModal] = useState<{ 
+    studentId: number; 
+    quizId: number; 
+    studentName: string; 
+    quizTitle: string 
+  } | null>(null);
+  const [resettingTest, setResettingTest] = useState(false);
+  
   const [documentConfig, setDocumentConfig] = useState<DocumentConfig>({
     joiningDate: "2025-07-22",
     timePeriod: "2 months",
@@ -137,7 +148,6 @@ export default function StudentsPage() {
     return Math.max(...relevantAttempts.map((attempt) => attempt.score));
   };
 
-  // Get the most recent submission timestamp for a student
   const getLastSubmissionTime = (student: Student): string | null => {
     const relevantAttempts = selectedQuizId
       ? student.attempts.filter((attempt) => attempt.quizId === selectedQuizId)
@@ -145,7 +155,6 @@ export default function StudentsPage() {
 
     if (relevantAttempts.length === 0) return null;
 
-    // Sort by completedAt descending and get the most recent
     const sortedAttempts = [...relevantAttempts].sort(
       (a, b) =>
         new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
@@ -154,7 +163,6 @@ export default function StudentsPage() {
     return sortedAttempts[0].completedAt;
   };
 
-  // Get time spent on the test
   const getTimeSpent = (student: Student): string | null => {
     const relevantAttempts = selectedQuizId
       ? student.attempts.filter((attempt) => attempt.quizId === selectedQuizId)
@@ -183,7 +191,6 @@ export default function StudentsPage() {
   const filteredStudents = useMemo(() => {
     let filtered = students;
 
-    // Apply search filter
     if (searchTerm) {
       filtered = filtered.filter(
         (student) =>
@@ -193,7 +200,6 @@ export default function StudentsPage() {
       );
     }
 
-    // Apply status filter
     if (filterType !== "all") {
       filtered = filtered.filter((student) => {
         const relevantAttempts = selectedQuizId
@@ -218,7 +224,6 @@ export default function StudentsPage() {
       });
     }
 
-    // Apply score filter
     if (scoreFilter !== "all") {
       filtered = filtered.filter((student) => {
         const bestScore = getStudentBestScore(student);
@@ -237,7 +242,6 @@ export default function StudentsPage() {
       ? quizzes.find((q) => q.id === selectedQuizId)?.title || "Unknown Quiz"
       : "All Quizzes";
 
-    // Helper function to get all attempts information
     const getAttemptsInfo = (student: Student) => {
       const relevantAttempts = selectedQuizId
         ? student.attempts.filter(
@@ -255,7 +259,6 @@ export default function StudentsPage() {
         };
       }
 
-      // Sort by completion date to get the most recent
       const sortedAttempts = [...relevantAttempts].sort(
         (a, b) =>
           new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
@@ -344,6 +347,7 @@ export default function StudentsPage() {
   const clearEmailSelection = () => {
     setSelectedEmails([]);
   };
+
   const createZipWithDocuments = async (
     students: Student[],
     config: DocumentConfig
@@ -370,7 +374,7 @@ export default function StudentsPage() {
             fileName = `Internship_Offer_Letter_${student.name.replace(
               /[^a-zA-Z0-9]/g,
               "_"
-            )}.docx`; // Changed to .docx for compatibility
+            )}.docx`;
           }
 
           zip.file(fileName, fileBlob);
@@ -437,7 +441,7 @@ export default function StudentsPage() {
           fileName = `Internship_Offer_Letter_${student.name.replace(
             /[^a-zA-Z0-9]/g,
             "_"
-          )}.docx`; // Changed to .docx
+          )}.docx`;
         }
 
         const url = URL.createObjectURL(fileBlob);
@@ -483,6 +487,39 @@ export default function StudentsPage() {
   const handleConfigSubmit = () => {
     setShowConfigPanel(false);
     setShowDocPanel(true);
+  };
+
+  // ADD THIS FUNCTION
+  const handleResetTest = async () => {
+    if (!resetModal) return;
+
+    setResettingTest(true);
+    try {
+      const response = await fetch('/api/admin/reset-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: resetModal.studentId,
+          quizId: resetModal.quizId,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to reset test');
+      }
+
+      alert(`Test has been reset successfully for ${resetModal.studentName}`);
+      setResetModal(null);
+      
+      // Refresh the data
+      fetchInitialData();
+    } catch (error) {
+      console.error('Error resetting test:', error);
+      alert(error instanceof Error ? error.message : 'Failed to reset test');
+    } finally {
+      setResettingTest(false);
+    }
   };
 
   if (loading) {
@@ -614,11 +651,11 @@ export default function StudentsPage() {
         </div>
       )}
 
-      {/* Students Table - Desktop */}
+      {/* REPLACE DESKTOP TABLE FROM HERE */}
       <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
         {/* ===== HEADER ===== */}
-        <div className="grid grid-cols-12 bg-gray-100 p-4 font-medium text-sm">
-          <div className="col-span-1">
+        <div className="grid grid-cols-[auto_auto_2fr_2fr_1.5fr_1fr_1fr_1fr_1.5fr] gap-4 bg-gray-100 p-4 font-medium text-sm">
+          <div>
             <input
               type="checkbox"
               checked={
@@ -633,13 +670,14 @@ export default function StudentsPage() {
               className="w-4 h-4"
             />
           </div>
-          <div className="col-span-1">S.No</div>
-          <div className="col-span-2">Name</div>
-          <div className="col-span-3">Email</div> {/* Increased space */}
-          <div className="col-span-2">Phone</div>
-          <div className="col-span-1 text-center">Score</div>
-          <div className="col-span-1 text-center">Status</div>
-          <div className="col-span-1 text-center">Submitted</div>
+          <div>S.No</div>
+          <div>Name</div>
+          <div>Email</div>
+          <div>Phone</div>
+          <div className="text-center">Score</div>
+          <div className="text-center">Status</div>
+          <div className="text-center">Submitted</div>
+          <div className="text-center">Actions</div>
         </div>
 
         {/* ===== NO STUDENT FOUND ===== */}
@@ -666,10 +704,10 @@ export default function StudentsPage() {
             return (
               <div
                 key={student.id}
-                className="grid grid-cols-12 p-4 items-center hover:bg-gray-50 border-b border-gray-200 text-sm"
+                className="grid grid-cols-[auto_auto_2fr_2fr_1.5fr_1fr_1fr_1fr_1.5fr] gap-4 p-4 items-center hover:bg-gray-50 border-b border-gray-200 text-sm"
               >
                 {/* Checkbox */}
-                <div className="col-span-1">
+                <div>
                   <input
                     type="checkbox"
                     checked={isSelected}
@@ -679,25 +717,25 @@ export default function StudentsPage() {
                 </div>
 
                 {/* S.No */}
-                <div className="col-span-1">{index + 1}</div>
+                <div>{index + 1}</div>
 
                 {/* Name */}
-                <div className="col-span-2 font-medium truncate">
+                <div className="font-medium truncate">
                   {student.name}
                 </div>
 
                 {/* Email */}
-                <div className="col-span-3 text-gray-600 truncate">
+                <div className="text-gray-600 truncate">
                   {student.email}
                 </div>
 
                 {/* Phone */}
-                <div className="col-span-2 text-gray-600 truncate">
+                <div className="text-gray-600 truncate">
                   {student.phone || "N/A"}
                 </div>
 
                 {/* Score */}
-                <div className="col-span-1 text-center">
+                <div className="text-center">
                   {bestScore !== null ? (
                     <span
                       className={`font-medium ${
@@ -712,7 +750,7 @@ export default function StudentsPage() {
                 </div>
 
                 {/* Status */}
-                <div className="col-span-1 text-center">
+                <div className="text-center">
                   {status === "Pass" ? (
                     <CheckCircle className="w-5 h-5 text-green-600 mx-auto" />
                   ) : status === "Fail" ? (
@@ -723,7 +761,7 @@ export default function StudentsPage() {
                 </div>
 
                 {/* Submitted */}
-                <div className="col-span-1 text-center text-xs text-gray-600">
+                <div className="text-center text-xs text-gray-600">
                   {lastSubmission ? (
                     <div>
                       <div>{formatSubmissionTime(lastSubmission)}</div>
@@ -736,6 +774,28 @@ export default function StudentsPage() {
                     </div>
                   ) : (
                     <span className="text-gray-400">Not submitted</span>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="text-center">
+                  {selectedQuizId && student.attempts.some(a => a.quizId === selectedQuizId) ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setResetModal({
+                        studentId: student.id,
+                        quizId: selectedQuizId,
+                        studentName: student.name,
+                        quizTitle: quizzes.find(q => q.id === selectedQuizId)?.title || "Quiz"
+                      })}
+                      className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300 text-xs"
+                    >
+                      <RotateCcw className="w-3 h-3 mr-1" />
+                      Reset
+                    </Button>
+                  ) : (
+                    <span className="text-gray-400 text-xs">-</span>
                   )}
                 </div>
               </div>
@@ -759,7 +819,6 @@ export default function StudentsPage() {
               : "No students found."}
           </div>
         ) : (
-          // In the mobile view section, add the submission info
           filteredStudents.map((student, index) => {
             const bestScore = getStudentBestScore(student);
             const status = getStudentStatus(student);
@@ -797,7 +856,6 @@ export default function StudentsPage() {
                     {student.phone || "N/A"}
                   </div>
 
-                  {/* NEW: Submission info for mobile */}
                   {lastSubmission && (
                     <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                       <span className="text-sm text-gray-500">Submitted:</span>
@@ -828,6 +886,26 @@ export default function StudentsPage() {
                       <span className="text-gray-400">N/A</span>
                     )}
                   </div>
+
+                  {/* Reset Button for Mobile */}
+                  {selectedQuizId && student.attempts.some(a => a.quizId === selectedQuizId) && (
+                    <div className="pt-3 border-t border-gray-100 mt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setResetModal({
+                          studentId: student.id,
+                          quizId: selectedQuizId,
+                          studentName: student.name,
+                          quizTitle: quizzes.find(q => q.id === selectedQuizId)?.title || "Quiz"
+                        })}
+                        className="w-full text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300"
+                      >
+                        <RotateCcw className="w-4 h-4 mr-2" />
+                        Reset Test
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1107,6 +1185,136 @@ export default function StudentsPage() {
                 >
                   {generatingDocs ? "Generating..." : "Generate Documents"}
                 </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Test Confirmation Modal */}
+      {resetModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-orange-500 to-red-500 p-6 text-white">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/20 backdrop-blur-sm rounded-full p-3">
+                  <RotateCcw className="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold">Reset Test</h3>
+                  <p className="text-white/90 text-sm">
+                    This action will delete all progress
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4">
+                <div className="flex gap-3">
+                  <svg
+                    className="h-6 w-6 text-blue-600 flex-shrink-0 mt-0.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <div>
+                    <p className="font-semibold text-blue-800 mb-1">
+                      Student Details
+                    </p>
+                    <p className="text-sm text-blue-700">
+                      <strong>Name:</strong> {resetModal.studentName}
+                    </p>
+                    <p className="text-sm text-blue-700">
+                      <strong>Quiz:</strong> {resetModal.quizTitle}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-6">
+                <div className="flex gap-3">
+                  <svg
+                    className="h-6 w-6 text-red-600 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <div>
+                    <p className="font-bold text-red-800 mb-1">
+                      ⚠️ Warning
+                    </p>
+                    <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
+                      <li>All test progress will be permanently deleted</li>
+                      <li>All submitted answers will be removed</li>
+                      <li>The student will need to restart from beginning</li>
+                      <li>Previous scores will not be recoverable</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={handleResetTest}
+                  disabled={resettingTest}
+                  className="w-full px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {resettingTest ? (
+                    <>
+                      <svg
+                        className="animate-spin h-5 w-5"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      Resetting Test...
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="h-5 w-5" />
+                      Yes, Reset Test
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setResetModal(null)}
+                  disabled={resettingTest}
+                  className="w-full px-6 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
