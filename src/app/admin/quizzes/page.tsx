@@ -9,12 +9,13 @@ import {
   Eye,
   Edit,
   Trash2,
-  FileText,
   Search,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Share2,
+  Check
 } from 'lucide-react';
 import {
   Table,
@@ -69,6 +70,9 @@ export default function QuizzesPage() {
     limit: 10
   });
   const [successMessage, setSuccessMessage] = useState('');
+  
+  // Share state
+  const [copiedQuizId, setCopiedQuizId] = useState<number | null>(null);
 
   useEffect(() => {
     const success = searchParams.get('success');
@@ -156,6 +160,19 @@ export default function QuizzesPage() {
     } catch (error) {
       console.error('Error deleting quiz:', error);
       alert('Failed to delete quiz. Please try again.');
+    }
+  };
+
+  const handleShareQuiz = async (quiz: Quiz) => {
+    try {
+      const baseUrl = window.location.origin;
+      const link = `${baseUrl}/quiz/${quiz.id}?access=true`;
+      await navigator.clipboard.writeText(link);
+      setCopiedQuizId(quiz.id);
+      setTimeout(() => setCopiedQuizId(null), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      alert('Failed to copy link. Please try again.');
     }
   };
 
@@ -264,6 +281,19 @@ export default function QuizzesPage() {
                   <TableCell className="hidden md:table-cell">{formatDate(quiz.createdAt)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className={`${
+                          copiedQuizId === quiz.id 
+                            ? 'text-green-600 hover:bg-green-50' 
+                            : 'text-indigo-600 hover:bg-indigo-50'
+                        }`}
+                        onClick={() => handleShareQuiz(quiz)}
+                        title={copiedQuizId === quiz.id ? 'Link Copied!' : 'Share Quiz'}
+                      >
+                        {copiedQuizId === quiz.id ? <Check size={16} /> : <Share2 size={16} />}
+                      </Button>
                       <Link href={`/admin/quizzes/${quiz.id}`}>
                         <Button variant="ghost" size="sm" className="text-indigo-600 hover:bg-indigo-50">
                           <Eye size={16} />
