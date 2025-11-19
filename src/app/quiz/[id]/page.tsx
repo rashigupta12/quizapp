@@ -1,3 +1,4 @@
+// app/quiz/[id]/page.tsx - Modified to support link-based access
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
@@ -30,6 +31,10 @@ export default function QuizPage() {
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showQuestionNav, setShowQuestionNav] = useState(false);
   
+  // Link-based access tracking
+  const [isLinkBasedAccess, setIsLinkBasedAccess] = useState(false);
+  const [linkAttemptId, setLinkAttemptId] = useState<number | null>(null);
+  
   // Reload protection state
   const [showReloadModal, setShowReloadModal] = useState(false);
   const [reloadAttempts, setReloadAttempts] = useState(0);
@@ -43,11 +48,9 @@ export default function QuizPage() {
       const attempts = parseInt(savedAttempts);
       setReloadAttempts(attempts);
       
-      // If user has already hit 3+ attempts and reloaded, auto-submit
       if (attempts >= 3) {
         const shouldAutoSubmit = localStorage.getItem(`quiz-auto-submit-${quizId}`);
         if (shouldAutoSubmit === 'true') {
-          // Wait a bit for component to initialize
           setTimeout(() => {
             handleAutoSubmitAfterReload();
           }, 500);
@@ -56,14 +59,11 @@ export default function QuizPage() {
     }
   }, [quizId]);
 
-  // Update ref when isSubmitting changes
   useEffect(() => {
     isSubmittingRef.current = isSubmitting;
   }, [isSubmitting]);
 
-  // Handle auto-submit after page has reloaded
   const handleAutoSubmitAfterReload = async () => {
-    // Wait for quiz data to load
     const checkInterval = setInterval(() => {
       if (quizData && student && attemptId && !isSubmittingRef.current) {
         clearInterval(checkInterval);
@@ -71,7 +71,6 @@ export default function QuizPage() {
       }
     }, 100);
 
-    // Timeout after 10 seconds
     setTimeout(() => {
       clearInterval(checkInterval);
     }, 10000);
@@ -102,6 +101,7 @@ export default function QuizPage() {
           correctAnswers,
           passed: score >= (quizData.quiz.passingScore || 70),
           timeSpent,
+          linkAttemptId: isLinkBasedAccess ? linkAttemptId : null,
         }),
       });
 
@@ -119,18 +119,20 @@ export default function QuizPage() {
 
         storage.setResult(quizResult);
         
-        // Clear reload tracking
         localStorage.removeItem(`quiz-reload-attempts-${quizId}`);
         localStorage.removeItem(`quiz-auto-submit-${quizId}`);
         
-        // Navigate to completion page
+        // Clear link data if applicable
+        if (isLinkBasedAccess) {
+          storage.clearQuizLinkData();
+        }
+        
         router.push("/completion");
       } else {
         throw new Error(result.error || "Auto-submission failed");
       }
     } catch (error) {
       console.error("Auto-submission error:", error);
-      // Clear flags on error
       localStorage.removeItem(`quiz-reload-attempts-${quizId}`);
       localStorage.removeItem(`quiz-auto-submit-${quizId}`);
       setError("Failed to submit quiz. Please try again.");
@@ -139,11 +141,9 @@ export default function QuizPage() {
     }
   };
 
-  // Enhanced navigation prevention
   useEffect(() => {
     if (!attemptId) return;
 
-    // Handle beforeunload (reload, close tab, navigate away)
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!isSubmittingRef.current) {
         e.preventDefault();
@@ -152,14 +152,12 @@ export default function QuizPage() {
       }
     };
 
-    // Handle visibility change (tab switching, minimizing)
     const handleVisibilityChange = () => {
       if (document.hidden && !isSubmittingRef.current && !hasShownModalRef.current) {
         incrementReloadAttempts();
       }
     };
 
-    // Intercept keyboard shortcuts for reload
     const handleKeyDown = (e: KeyboardEvent) => {
       const isReloadShortcut = 
         (e.key === 'r' && (e.ctrlKey || e.metaKey)) || 
@@ -172,7 +170,6 @@ export default function QuizPage() {
       }
     };
 
-    // Handle popstate (browser back/forward buttons)
     const handlePopState = (e: PopStateEvent) => {
       if (!isSubmittingRef.current && !hasShownModalRef.current) {
         e.preventDefault();
@@ -219,7 +216,7 @@ export default function QuizPage() {
     await handleQuizCompletion();
   };
 
-  // Load quiz data and create/resume attempt
+  // Load quiz data with link-based access support
   useEffect(() => {
     const studentData = storage.getStudent();
     console.log("Student data from storage in quiz:", studentData);
@@ -231,6 +228,20 @@ export default function QuizPage() {
     }
 
     setStudent(studentData);
+
+    // Check if this is link-based access
+    const linkData = storage.getQuizLinkData();
+    if (linkData) {
+      setIsLinkBasedAccess(true);
+      setLinkAttemptId(linkData.linkAttemptId);
+      
+      // Verify student can only access the specified quiz
+      if (linkData.quizId !== parseInt(quizId)) {
+        setError("You don't have access to this quiz. Please use the provided link.");
+        setIsLoading(false);
+        return;
+      }
+    }
 
     const fetchQuiz = async () => {
       try {
@@ -314,7 +325,7 @@ export default function QuizPage() {
     };
   }, [router, quizId]);
 
-  // Timer countdown with server sync
+  // Timer countdown
   useEffect(() => {
     if (!quizData || !attemptId || timeLeft <= 0) return;
 
@@ -445,6 +456,7 @@ export default function QuizPage() {
         correctAnswers,
         passed: score >= (quizData.quiz.passingScore || 70),
         timeSpent,
+        linkAttemptId: isLinkBasedAccess ? linkAttemptId : null,
       });
 
       const response = await fetch("/api/attempts/complete", {
@@ -457,6 +469,7 @@ export default function QuizPage() {
           correctAnswers,
           passed: score >= (quizData.quiz.passingScore || 70),
           timeSpent,
+          linkAttemptId: isLinkBasedAccess ? linkAttemptId : null,
         }),
       });
 
@@ -482,9 +495,13 @@ export default function QuizPage() {
       const savedResult = storage.getResult();
       console.log("Verified saved result:", savedResult);
 
-      // Clear reload attempts on normal completion
       localStorage.removeItem(`quiz-reload-attempts-${quizId}`);
       localStorage.removeItem(`quiz-auto-submit-${quizId}`);
+      
+      // Clear link data if applicable
+      if (isLinkBasedAccess) {
+        storage.clearQuizLinkData();
+      }
       
       router.push("/completion");
     } catch (error) {
@@ -550,11 +567,13 @@ export default function QuizPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pt-10">
-      {/* Modern Sticky Header */}
+      {/* Rest of your existing UI code remains exactly the same */}
+      {/* I'm keeping all your existing UI structure */}
+      
+      {/* Sticky Header */}
       <div className="bg-white/80 backdrop-blur-lg shadow-lg border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between gap-4">
-            {/* Quiz Title & Progress */}
             <div className="flex-1 min-w-0">
               <h1 className="text-lg sm:text-xl font-bold text-gray-800 capitalize mb-1">
                 {quizData.quiz.title}
@@ -571,7 +590,6 @@ export default function QuizPage() {
               </div>
             </div>
 
-            {/* Timer */}
             <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-lg sm:text-xl font-bold shadow-lg ${
               timeLeft <= 300
                 ? "bg-gradient-to-r from-red-500 to-red-600 text-white animate-pulse"
@@ -588,12 +606,10 @@ export default function QuizPage() {
         </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* Main Content - Your existing question card and navigation */}
       <div className="max-w-4xl mx-auto px-2 py-3">
-        {/* Question Card */}
         <div className="lg:col-span-3">
           <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-8 mb-3">
-            {/* Question Header */}
             <div className="flex items-start justify-between mb-3">
               <div className="flex-1">
                 <h2 className="text-xl sm:text-2xl font-bold text-gray-800 leading-relaxed">
@@ -602,7 +618,6 @@ export default function QuizPage() {
               </div>
             </div>
 
-            {/* Answer Options */}
             <div className="space-y-2 mb-4">
               {currentQuestion.options.map((option, index) => {
                 const choiceLetter = getChoiceLetter(index);
@@ -648,7 +663,6 @@ export default function QuizPage() {
               })}
             </div>
 
-            {/* Navigation Buttons */}
             <div className="flex gap-4 pt-2 border-t-2 border-gray-100">
               <button
                 onClick={goToPreviousQuestion}
@@ -674,7 +688,6 @@ export default function QuizPage() {
             </div>
           </div>
 
-          {/* Submit Section */}
           <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl shadow-lg p-6 border-2 border-green-200">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-center sm:text-left">
@@ -698,7 +711,6 @@ export default function QuizPage() {
             </div>
           </div>
 
-          {/* Mobile Question Navigator */}
           <button
             onClick={() => setShowQuestionNav(!showQuestionNav)}
             className="lg:hidden fixed bottom-4 right-4 w-14 h-14 bg-gradient-to-br from-blue-600 to-purple-600 text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-110 transition-transform"
@@ -757,7 +769,6 @@ export default function QuizPage() {
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-slideUp">
-            {/* Modal Header */}
             <div className="bg-gradient-to-r from-orange-500 to-red-500 p-6 text-white">
               <div className="flex items-center gap-4">
                 <div className="bg-white/20 backdrop-blur-sm rounded-full p-3">
@@ -772,9 +783,7 @@ export default function QuizPage() {
               </div>
             </div>
 
-            {/* Modal Content */}
             <div className="p-6">
-              {/* Warning Message */}
               {unansweredCount > 0 && (
                 <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-4 mb-6">
                   <div className="flex gap-3">
@@ -792,7 +801,6 @@ export default function QuizPage() {
                 </div>
               )}
 
-              {/* Critical Warning */}
               <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-6">
                 <div className="flex gap-3">
                   <svg className="h-6 w-6 text-red-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -808,7 +816,6 @@ export default function QuizPage() {
                 </div>
               </div>
 
-              {/* Time Remaining Info */}
               {timeLeft > 60 && (
                 <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-6">
                   <div className="flex items-center gap-3">
@@ -825,7 +832,6 @@ export default function QuizPage() {
                 </div>
               )}
 
-              {/* Action Buttons */}
               <div className="flex flex-col gap-3">
                 <button
                   onClick={handleQuizCompletion}
@@ -870,7 +876,6 @@ export default function QuizPage() {
       {showReloadModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-slideUp">
-            {/* Modal Header */}
             <div className={`p-6 text-white ${
               reloadAttempts >= 3 
                 ? "bg-gradient-to-r from-red-500 to-orange-500" 
@@ -893,7 +898,6 @@ export default function QuizPage() {
               </div>
             </div>
 
-            {/* Modal Content */}
             <div className="p-6">
               {reloadAttempts >= 3 ? (
                 <div className="space-y-4">

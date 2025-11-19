@@ -9,7 +9,8 @@ import {
   text,
   timestamp,
   varchar,
-  json
+  json,
+  unique
 } from 'drizzle-orm/pg-core';
 
 // --- STUDENTS (Only name & email) ---
@@ -195,7 +196,81 @@ export const emailCampaigns = pgTable('email_campaigns', {
 export type EmailCampaign = InferModel<typeof emailCampaigns>;
 export type NewEmailCampaign = InferModel<typeof emailCampaigns, 'insert'>;
 
+export const quizLinks = pgTable('quiz_links', {
+  id: serial('id').primaryKey(),
+  quizId: integer('quiz_id').notNull().references(() => quizzes.id, { onDelete: 'cascade' }),
+  token: varchar('token', { length: 64 }).notNull().unique(), // Unique URL token
+  
+  // Metadata
+  createdAt: timestamp('created_at').defaultNow(),
+  createdBy: integer('created_by').references(() => admins.id),
+  expiresAt: timestamp('expires_at'), // Optional expiration
+  
+  // Status tracking
+  isActive: boolean('is_active').default(true),
+  maxUses: integer('max_uses'), // Optional: limit number of students who can use this link
+  usedCount: integer('used_count').default(0), // Track how many times link was used
+  
+  // Analytics
+  lastAccessedAt: timestamp('last_accessed_at'),
+});
+
+export type QuizLink = InferModel<typeof quizLinks>;
+export type NewQuizLink = InferModel<typeof quizLinks, 'insert'>;
+
+export const quizLinkAttempts = pgTable('quiz_link_attempts', {
+  id: serial('id').primaryKey(),
+  quizLinkId: integer('quiz_link_id').notNull().references(() => quizLinks.id, { onDelete: 'cascade' }),
+  studentId: integer('student_id').notNull().references(() => students.id),
+  quizId: integer('quiz_id').notNull().references(() => quizzes.id),
+  
+  // Tracking
+  accessedAt: timestamp('accessed_at').defaultNow(),
+  attemptId: integer('attempt_id').references(() => attempts.id), // Link to actual quiz attempt
+  
+  // Security
+  ipAddress: varchar('ip_address', { length: 45 }),
+  userAgent: text('user_agent'),
+}, (table) => ({
+  // Ensure one student can only use a specific quiz link once
+  uniqueStudentLink: unique().on(table.quizLinkId, table.studentId)
+}));
+
+export type QuizLinkAttempt = InferModel<typeof quizLinkAttempts>;
+export type NewQuizLinkAttempt = InferModel<typeof quizLinkAttempts, 'insert'>;
+
 // ===== RELATIONS ===== //
+
+export const quizLinksRelations = relations(quizLinks, ({ one, many }) => ({
+  quiz: one(quizzes, {
+    fields: [quizLinks.quizId],
+    references: [quizzes.id],
+  }),
+  createdByAdmin: one(admins, {
+    fields: [quizLinks.createdBy],
+    references: [admins.id],
+  }),
+  linkAttempts: many(quizLinkAttempts),
+}));
+
+export const quizLinkAttemptsRelations = relations(quizLinkAttempts, ({ one }) => ({
+  quizLink: one(quizLinks, {
+    fields: [quizLinkAttempts.quizLinkId],
+    references: [quizLinks.id],
+  }),
+  student: one(students, {
+    fields: [quizLinkAttempts.studentId],
+    references: [students.id],
+  }),
+  quiz: one(quizzes, {
+    fields: [quizLinkAttempts.quizId],
+    references: [quizzes.id],
+  }),
+  attempt: one(attempts, {
+    fields: [quizLinkAttempts.attemptId],
+    references: [attempts.id],
+  }),
+}));
 
 export const studentsRelations = relations(students, ({ many }) => ({
   attempts: many(attempts),
@@ -230,6 +305,7 @@ export const quizzesRelations = relations(quizzes, ({ one, many }) => ({
   questions: many(questions),
   attempts: many(attempts),
   studentStatuses: many(studentQuizStatus),
+  quizLinks: many(quizLinks), // Add this line
   createdByAdmin: one(admins, {
     fields: [quizzes.createdBy],
     references: [admins.id],
